@@ -81,6 +81,12 @@ void hash_table_v2_add_entry(struct hash_table_v2 *hash_table,
 	struct hash_table_entry *hash_table_entry = get_hash_table_entry(hash_table, key);
 	struct list_head *list_head = &hash_table_entry->list_head;
 
+	/* Allocate the new node outside the critical section so we don't
+	 * serialize threads inside the bucket lock waiting on the allocator. */
+	struct list_entry *new_entry = calloc(1, sizeof(struct list_entry));
+	new_entry->key = key;
+	new_entry->value = value;
+
 	int err = pthread_mutex_lock(&hash_table_entry->mutex);
 	if (err != 0) {
 		exit(err);
@@ -95,13 +101,11 @@ void hash_table_v2_add_entry(struct hash_table_v2 *hash_table,
 		if (err != 0) {
 			exit(err);
 		}
+		free(new_entry);
 		return;
 	}
 
-	list_entry = calloc(1, sizeof(struct list_entry));
-	list_entry->key = key;
-	list_entry->value = value;
-	SLIST_INSERT_HEAD(list_head, list_entry, pointers);
+	SLIST_INSERT_HEAD(list_head, new_entry, pointers);
 
 	err = pthread_mutex_unlock(&hash_table_entry->mutex);
 	if (err != 0) {

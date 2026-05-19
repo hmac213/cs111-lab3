@@ -18,14 +18,14 @@ Defaults are `-t 4 -s 25000`. Example:
 ```shell
 ./hash-table-tester -t 8 -s 50000
 ```
-Sample output (8 threads, 50,000 entries each, on a machine with 8 cores):
+Sample output on my test VM (`nproc` = 8, 8 threads × 50,000 entries):
 ```
-Generation: 122,331 usec
-Hash table base: 1,498,902 usec
+Generation: 414,712 usec
+Hash table base: 5,761,248 usec
   - 0 missing
-Hash table v1: 1,940,114 usec
+Hash table v1: 20,126,580 usec
   - 0 missing
-Hash table v2: 246,719 usec
+Hash table v2: 1,241,608 usec
   - 0 missing
 ```
 
@@ -52,19 +52,36 @@ table at a time. `contains` and `get_value` are only ever called serially
 ```shell
 ./hash-table-tester -t 8 -s 50000
 ```
-With 8 threads and 50,000 entries each:
-- Base: ~1,500,000 usec
-- v1:   ~1,940,000 usec
+With 8 threads and 50,000 entries each on my VM (`nproc` = 8):
+- Base: 5,761,248 usec
+- v1:  20,126,580 usec  (≈ 3.5× slower than base)
 
 Version 1 is *slower* than the base version. This is expected: v1 does
 the same work as the base serial implementation (only one thread can be
 inside `add_entry` at a time, since the mutex is global), but it also
-pays the overhead of `pthread_create`/`pthread_join` for each thread,
-plus `pthread_mutex_lock`/`unlock` on every single insert and cache-line
-contention on the lone mutex word. None of that work exists in the
-serial base version, so v1's wall-clock time is base time + thread
-setup/teardown + lock overhead. Coarse-grained locking turns the
-parallel version back into a (slower) serial one.
+pays a lot of overhead the serial base version doesn't have:
+
+1. **Thread setup/teardown.** The tester spawns 8 threads with
+   `pthread_create` and waits on `pthread_join`. Each `pthread_create`
+   call has to allocate a stack, set up TLS, and enter the kernel to
+   create a new task; `pthread_join` blocks the main thread waiting on
+   each worker. The base version runs entirely on the main thread and
+   pays none of this.
+2. **Lock acquisition on every insert.** v1 does
+   `pthread_mutex_lock` + `pthread_mutex_unlock` on every single call to
+   `add_entry` (400,000 times in this run). Even on a single uncontended
+   acquire, this is an atomic RMW plus a function call.
+3. **Lock contention and cache-line bouncing.** All 8 threads are
+   fighting over the *same* mutex. Every successful acquire/release
+   bounces the cache line holding the mutex word between cores, and
+   threads that don't win the lock either spin briefly or get descheduled
+   by the kernel. That's pure overhead — none of it exists in the serial
+   base.
+
+Net: v1's wall-clock time is roughly *base time + thread definition
+overhead + lock overhead + contention*, so it's strictly worse than
+serial. Coarse-grained locking turns the parallel version back into a
+slower serial one.
 
 ## Second Implementation
 In the `hash_table_v2_add_entry` function, I moved the mutex *into*
@@ -76,10 +93,15 @@ independent locks. Each lock is initialized in `hash_table_v2_create`
 
 `add_entry` first computes the bucket via `get_hash_table_entry` (this
 is a pure read of an array index and doesn't touch any shared mutable
-state, so it doesn't need a lock), then locks that bucket's mutex,
-performs the linear search + insert/update, and unlocks. Both exit paths
-unlock before returning. All `pthread_mutex_*` return values are
-checked.
+state, so it doesn't need a lock). To minimize time-under-lock, the new
+`list_entry` is `calloc`'d *before* the lock is taken — the allocator
+has its own internal locks, and pulling that call out of the critical
+section means threads contending on the same bucket don't also serialize
+on `calloc`. The bucket mutex is then taken only around the linear
+search and the linked-list update. Both exit paths unlock before
+returning; if the key turned out to already exist, the speculatively
+allocated node is `free`'d after unlocking so we don't leak. All
+`pthread_mutex_*` return values are checked.
 
 This is correct because the only shared mutable state touched inside
 `add_entry` is the bucket's linked list (`list_head` and the `next`
@@ -96,21 +118,34 @@ they're untouched.
 ```shell
 ./hash-table-tester -t 8 -s 50000
 ```
-With 8 threads and 50,000 entries each on an 8-core machine:
-- Base: ~1,500,000 usec
-- v1:   ~1,940,000 usec  (≈ 0.77× base — slower)
-- v2:   ~  247,000 usec  (≈ 6.1× base — faster)
+With 8 threads and 50,000 entries each on my VM (`nproc` = 8):
+- Base:  5,761,248 usec
+- v1:   20,126,580 usec  (≈ 3.5× *slower* than base)
+- v2:    1,241,608 usec  (≈ 4.64× *faster* than base)
 
-v2 is roughly **6× faster than the base** with 8 threads, comfortably
-meeting the strong criterion of `v2 ≤ base / (num_cores − 1)` =
-`base / 7`. The speedup is sub-linear because (a) the
-`pthread_create`/`join` setup is still on the critical path, (b) the
-keys distribute across only 4096 buckets so some collisions still cause
-brief serialization, and (c) `malloc`/`calloc` inside the critical
-section can contend on the allocator's internal locks. But the dominant
-cost — walking and mutating the bucket's linked list — now scales
-almost linearly with the number of cores, which is exactly what
-per-bucket locking buys us.
+v2 is **≈ 4.6× faster than the base** with 8 threads — a substantial
+speedup that scales with thread count, in contrast to v1's regression.
+The speedup is sub-linear (you might expect closer to 8× on 8 cores)
+for a few reasons:
+
+1. **Thread create/join is still on the critical path** and is roughly
+   constant overhead independent of the work done per thread.
+2. **Bucket collisions.** With only 4096 buckets and 400,000 inserts
+   the average bucket holds ~100 entries, and any two threads inserting
+   into the same bucket are serialized on that bucket's mutex.
+3. **Residual allocator contention.** Each insert still calls `calloc`
+   for a new `list_entry`; pulling it out of the critical section helps,
+   but glibc's allocator still has internal locks that can occasionally
+   serialize concurrent allocations.
+4. **Logical vs. physical cores.** `nproc` reports logical CPUs; if the
+   VM's 8 vCPUs are backed by 4 physical cores with SMT, the practical
+   parallelism ceiling is closer to 4–5×, not 8×.
+
+But the dominant cost — walking and mutating the bucket's linked list —
+now runs concurrently for disjoint buckets, which is exactly what
+per-bucket locking buys us. Compared to v1's single global mutex, v2
+turns ~4096-way potential parallelism into actual parallel work for
+threads that happen to land on different buckets.
 
 ## Cleaning up
 ```shell
