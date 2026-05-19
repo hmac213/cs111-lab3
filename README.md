@@ -19,12 +19,12 @@ Defaults are `-t 4 -s 25000`. Example:
 ```
 Sample output on my test VM (`nproc` = 8, 8 threads × 50,000 entries):
 ```
-Generation: 414,712 usec
-Hash table base: 5,761,248 usec
+Generation: 425,194 usec
+Hash table base: 6,941,345 usec
   - 0 missing
-Hash table v1: 20,126,580 usec
+Hash table v1: 17,230,584 usec
   - 0 missing
-Hash table v2: 1,241,608 usec
+Hash table v2: 1,350,318 usec
   - 0 missing
 ```
 
@@ -52,8 +52,8 @@ table at a time. `contains` and `get_value` are only ever called serially
 ./hash-table-tester -t 8 -s 50000
 ```
 With 8 threads and 50,000 entries each on my VM (`nproc` = 8):
-- Base: 5,761,248 usec
-- v1:  20,126,580 usec  (≈ 3.5× slower than base)
+- Base:  6,941,345 usec
+- v1:   17,230,584 usec  (≈ 2.5× slower than base)
 
 Version 1 is *slower* than the base version. This is expected: v1 does
 the same work as the base serial implementation (only one thread can be
@@ -118,11 +118,11 @@ they're untouched.
 ./hash-table-tester -t 8 -s 50000
 ```
 With 8 threads and 50,000 entries each on my VM (`nproc` = 8):
-- Base:  5,761,248 usec
-- v1:   20,126,580 usec  (≈ 3.5× *slower* than base)
-- v2:    1,241,608 usec  (≈ 4.64× *faster* than base)
+- Base:  6,941,345 usec
+- v1:   17,230,584 usec  (≈ 2.5× *slower* than base)
+- v2:    1,350,318 usec  (≈ 5.14× *faster* than base)
 
-v2 is **≈ 4.6× faster than the base** with 8 threads — a substantial
+v2 is **≈ 5.1× faster than the base** with 8 threads — a substantial
 speedup that scales with thread count, in contrast to v1's regression.
 The speedup is sub-linear (you might expect closer to 8× on 8 cores)
 for a few reasons:
