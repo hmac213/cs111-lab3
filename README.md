@@ -1,9 +1,8 @@
 # Hash Hash Hash
 
-This lab takes a serial separate-chaining hash table and produces two
-thread-safe versions of `add_entry` using `pthread_mutex_t`. `v1` uses a
-single coarse-grained mutex (correctness only). `v2` uses one mutex per
-bucket (correctness *and* performance).
+This lab takes a serial hash table and produces two
+thread-safe versions of `add_entry` using `pthread_mutex_t`. `v1` uses one mutex. `v2` uses one mutex per
+bucket.
 
 ## Building
 ```shell
