@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(make *)",
+      "Bash(brew --prefix argp-standalone)",
+      "Read(//opt/homebrew/opt/argp-standalone/**)",
+      "Read(//opt/homebrew/include/**)",
+      "Bash(brew list *)",
+      "Bash(cc -std=gnu17 -pthread -Wall -O0 -c hash-table-v1.c -o /tmp/v1.o)",
+      "Bash(cc -std=gnu17 -pthread -Wall -O0 -c hash-table-v2.c -o /tmp/v2.o)",
+      "Bash(brew install *)",
+      "Bash(wait %1)",
+      "Bash(echo \"DONE exit=$?\")"
+    ]
+  }
+}
