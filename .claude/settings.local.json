@@ -11,7 +11,10 @@
       "Bash(brew install *)",
       "Bash(wait %1)",
       "Bash(echo \"DONE exit=$?\")",
-      "Bash(sort -k9)"
+      "Bash(sort -k9)",
+      "Read(//Users/hmac/Downloads/**)",
+      "Bash(tar --exclude='.git' --exclude='.claude' --exclude='.DS_Store' --exclude='*.o' --exclude='__pycache__' --exclude='hash-table-tester' -czf 506380176.tar.gz lab3/)",
+      "Bash(tar -tzf 506380176.tar.gz)"
     ]
   }
 }
